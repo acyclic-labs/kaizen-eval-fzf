@@ -12,6 +12,24 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # The integration tests take most of the job time, so they are split
+        # by test class into shards that run in parallel. The last shard
+        # excludes the classes of the others rather than listing its own, so
+        # a new test class is never left out. Lint, unit and fuzz tests run
+        # only on the first shard.
+        include:
+          - shard: 1
+            tests: -n '/^TestFish#/'
+          - shard: 2
+            tests: -n '/^(TestZsh|TestNushell)#/'
+          - shard: 3
+            tests: -n '/^(TestCore|TestExec|TestPreview)#/'
+          - shard: 4
+            tests: -e '/^(TestFish|TestZsh|TestNushell|TestCore|TestExec|TestPreview)#/'
+    name: build (${{ matrix.shard }})
     steps:
     - uses: actions/checkout@v7
       with:
@@ -43,15 +61,18 @@ jobs:
       run: bundle install
 
     - name: Rubocop
+      if: matrix.shard == 1
       run: make lint
 
     - name: Unit test
+      if: matrix.shard == 1
       run: make test
 
     - name: Fuzz test
+      if: matrix.shard == 1
       run: |
         go test ./src/algo/ -fuzz=FuzzIndexByteTwo -fuzztime=5s
         go test ./src/algo/ -fuzz=FuzzLastIndexByteTwo -fuzztime=5s
 
     - name: Integration test
-      run: make install && ./install --all && tmux new-session -d && ruby test/runner.rb --verbose
+      run: make install && ./install --all && tmux new-session -d && ruby test/runner.rb --verbose ${{ matrix.tests }}
