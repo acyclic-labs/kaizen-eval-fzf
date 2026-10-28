@@ -53,5 +53,53 @@ jobs:
         go test ./src/algo/ -fuzz=FuzzIndexByteTwo -fuzztime=5s
         go test ./src/algo/ -fuzz=FuzzLastIndexByteTwo -fuzztime=5s
 
+  # The integration tests dominate the wall time, so they are split by test
+  # class across parallel jobs. The last shard excludes the classes of the
+  # other shards, so a test class not listed explicitly still runs there.
+  integration:
+    name: integration (${{ matrix.shard }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - shard: zsh
+          filter: -n '/^TestZsh#/'
+        - shard: bash-nushell-layout
+          filter: -n '/^(TestBash|TestNushell|TestLayout)#/'
+        - shard: fish-exec
+          filter: -n '/^(TestFish|TestExec)#/'
+        - shard: rest
+          filter: -e '/^(TestZsh|TestBash|TestNushell|TestLayout|TestFish|TestExec)#/'
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: "1.23"
+
+    - name: Setup Ruby
+      uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+      with:
+        ruby-version: 3.4.6
+
+    - name: Install packages
+      run: |
+        sudo install -d -m 0755 /etc/apt/keyrings
+        wget -qO- https://apt.fury.io/nushell/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/fury-nushell.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/fury-nushell.gpg] https://apt.fury.io/nushell/ /" | sudo tee /etc/apt/sources.list.d/fury-nushell.list
+        sudo apt-get update
+        # Pinned: the Nushell scripts now require 0.116+, where an external
+        # completer reaches the terminal through the @interactive attribute.
+        # Before that (e.g. 0.115.0), completers run on a background thread, so
+        # fzf never receives keystrokes. https://github.com/nushell/nushell/issues/18771
+        sudo apt-get install --yes zsh fish tmux shfmt nushell=0.116.1-0
+
+    - name: Install Ruby gems
+      run: bundle install
+
     - name: Integration test
-      run: make install && ./install --all && tmux new-session -d && ruby test/runner.rb --verbose
+      run: make install && ./install --all && tmux new-session -d && ruby test/runner.rb --verbose ${{ matrix.filter }}
